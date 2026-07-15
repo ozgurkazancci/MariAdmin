@@ -49,7 +49,8 @@ Run the script and enter your MariaDB root password when asked (your typing stay
 Choose an option:
 ```
 
-Pick a number and follow the prompts. At any input prompt you can press **Enter** to return to menu, **Ctrl+C** to quit back to your shell.
+Pick a number and follow the prompts.
+At any input prompt you can press **Enter** to return to menu, **Ctrl+C** to quit back to your shell.
 
 ### Example: a clear failure
 
