@@ -1,250 +1,399 @@
 #!/bin/sh
+# MariAdmin - MariaDB/MySQL management menu
+# v0.2 - Ozgur Konstantin Kazancci
 
-# Prompt for MySQL root password securely (OpenBSD/FreeBSD-compatible)
-clear
-echo -n "Enter MySQL root password: "
-stty -echo  # Disable input echo
-read DB_PASS
-stty echo   # Re-enable input echo
-echo  # Move to a new line
+# ---------------------------------------------------------------------------
+# Colors (automatically disabled when stdout is not a terminal)
+# ---------------------------------------------------------------------------
+if [ -t 1 ]; then
+    ESC=$(printf '\033')
+    C_RESET="${ESC}[0m"
+    C_TITLE="${ESC}[1;36m"
+    C_MENU="${ESC}[0;36m"
+    C_KEY="${ESC}[1;33m"
+    C_OK="${ESC}[1;32m"
+    C_ERR="${ESC}[1;31m"
+    C_WARN="${ESC}[1;33m"
+    C_PROMPT="${ESC}[1;37m"
+    C_DIM="${ESC}[0;90m"
+else
+    C_RESET=; C_TITLE=; C_MENU=; C_KEY=; C_OK=; C_ERR=; C_WARN=; C_PROMPT=; C_DIM=
+fi
 
-# Hand the password to the MySQL client via the environment.
-# This avoids the "Enter password:" prompt and keeps the password
-# out of the process list (more secure than -p on the command line).
-export MYSQL_PWD="$DB_PASS"
+say_ok()   { printf '%s%s%s\n' "$C_OK"   "$1" "$C_RESET"; }
+say_err()  { printf '%s%s%s\n' "$C_ERR"  "$1" "$C_RESET"; }
+say_warn() { printf '%s%s%s\n' "$C_WARN" "$1" "$C_RESET"; }
+say_info() { printf '%s%s%s\n' "$C_DIM"  "$1" "$C_RESET"; }
 
-# Function to list databases
-list_databases() {
-    echo "------------------------"
-    echo "      DATABASES"
-    echo "------------------------"
-    mysql -u root -e "SHOW DATABASES;" | tail -n +2 | awk '{printf " - %s\n", $1}'
-    echo "------------------------"
+# ---------------------------------------------------------------------------
+# Screen helpers: keep the menu at the top and clear between actions so the
+# current prompt/output is always shown on a fresh screen.
+# ---------------------------------------------------------------------------
+clear_screen() {
+    [ -t 1 ] || return 0
+    command clear 2>/dev/null || printf '%s[H%s[2J' "$ESC" "$ESC"
 }
 
-# Function to add a database
-add_database() {
-    while true; do
-        echo -n "Enter new database name (CTRL+C to quit): "
-        read DB_NAME
-        DB_NAME=$(echo "$DB_NAME" | tr -d ' ')  # Remove spaces
+pause() {
+    # Only wait for a keypress when running interactively.
+    [ -t 0 ] || return 0
+    printf '\n%sPress ENTER to continue...%s' "$C_DIM" "$C_RESET"
+    read -r _dummy
+}
 
-        if [ -z "$DB_NAME" ]; then
-            echo "Error: Database name cannot be empty. Try again."
-            continue
-        fi
+header() {
+    clear_screen
+    printf '%s==================================================%s\n' "$C_TITLE" "$C_RESET"
+    printf '%s  MariAdmin - %s%s\n' "$C_TITLE" "$1" "$C_RESET"
+    printf '%s==================================================%s\n\n' "$C_TITLE" "$C_RESET"
+}
 
-        # Check if database already exists
-        DB_EXISTS=$(mysql -u root -sN -e "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='$DB_NAME';")
-        if [ "$DB_EXISTS" -gt 0 ]; then
-            echo "Error: Database '$DB_NAME' already exists. Choose another name."
-            continue
-        fi
+# ---------------------------------------------------------------------------
+# Input helpers.
+#   ask        : read a visible value; empty ENTER or EOF => return to menu.
+#   ask_secret : read a hidden value; empty ENTER or EOF => return to menu.
+# Result is placed in REPLY_VAL. Both return non-zero to signal "go back".
+# ---------------------------------------------------------------------------
+ask() {
+    printf '%s%s%s' "$C_PROMPT" "$1" "$C_RESET"
+    read -r REPLY_VAL || return 1
+    [ -n "$REPLY_VAL" ] || return 1
+    return 0
+}
 
-        break
-    done
-
-    CREATE_OUTPUT=$(mysql -u root -e "CREATE DATABASE \`$DB_NAME\`;" 2>&1)
-    if [ $? -eq 0 ]; then
-        echo ""
-        echo "+----------------------------------------+"
-        echo "|  SUCCESS                                |"
-        echo "+----------------------------------------+"
-        echo "  Database '$DB_NAME' was created."
-        echo "+----------------------------------------+"
+ask_secret() {
+    printf '%s%s%s' "$C_PROMPT" "$1" "$C_RESET"
+    if [ -t 0 ]; then
+        stty -echo
+        trap 'stty echo' INT
+        read -r REPLY_VAL
+        _rc=$?
+        stty echo
+        trap - INT
+        printf '\n'
     else
-        echo ""
-        echo "+----------------------------------------+"
-        echo "|  ERROR: DATABASE WAS NOT CREATED        |"
-        echo "+----------------------------------------+"
-        echo "  Name   : $DB_NAME"
-        echo "  Reason :"
-        printf '%s\n' "$CREATE_OUTPUT" | sed 's/^/    /'
-        echo "+----------------------------------------+"
+        read -r REPLY_VAL
+        _rc=$?
+    fi
+    [ "$_rc" -eq 0 ] || return 1
+    [ -n "$REPLY_VAL" ] || return 1
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Validation and SQL helpers.
+# ---------------------------------------------------------------------------
+# Allow only safe identifier characters. This both prevents SQL injection and
+# rejects (instead of silently altering) names with spaces or metacharacters.
+valid_ident() {
+    case "$1" in
+        ''|*[!A-Za-z0-9_]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Escape backslash and single quote so a value is safe inside a MySQL
+# single-quoted string (used for passwords, which may contain any character).
+sql_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e "s/'/\\\\'/g"
+}
+
+# Run a statement as root; on failure the client output is captured in SQL_ERR.
+run_sql() {
+    SQL_ERR=$(mysql -u root -e "$1" 2>&1)
+    return $?
+}
+
+print_reason() {
+    printf '%s\n' "$1" | sed 's/^/    /'
+}
+
+db_exists() {
+    _n=$(mysql -u root -N -B -e \
+        "SELECT schema_name FROM information_schema.schemata WHERE schema_name='$1';" 2>/dev/null)
+    [ "$_n" = "$1" ]
+}
+
+user_exists_localhost() {
+    _n=$(mysql -u root -N -B -e \
+        "SELECT user FROM mysql.user WHERE user='$1' AND host='localhost';" 2>/dev/null)
+    [ "$_n" = "$1" ]
+}
+
+user_exists_any() {
+    _c=$(mysql -u root -N -B -e \
+        "SELECT COUNT(*) FROM mysql.user WHERE user='$1';" 2>/dev/null)
+    [ -n "$_c" ] && [ "$_c" != "0" ]
+}
+
+grant_user_db() {
+    _u="$1"; _d="$2"
+    if run_sql "GRANT ALL PRIVILEGES ON \`$_d\`.* TO '$_u'@'localhost'; FLUSH PRIVILEGES;"; then
+        say_ok "User '$_u' now has access to database '$_d'."
+    else
+        say_err "Failed to grant privileges:"
+        print_reason "$SQL_ERR"
     fi
 }
 
-# Function to remove a database
+# ---------------------------------------------------------------------------
+# Menu actions.
+# ---------------------------------------------------------------------------
+list_databases() {
+    header "Databases"
+    mysql -u root -N -B -e "SHOW DATABASES;" 2>/dev/null | while IFS= read -r _db; do
+        printf '  %s-%s %s\n' "$C_KEY" "$C_RESET" "$_db"
+    done
+    pause
+}
+
+add_database() {
+    header "Add a database"
+    ask "Enter new database name (ENTER to return to menu): " || return
+    DB_NAME="$REPLY_VAL"
+
+    if ! valid_ident "$DB_NAME"; then
+        say_err "Invalid name. Use only letters, digits and underscore."
+        pause; return
+    fi
+    if db_exists "$DB_NAME"; then
+        say_err "Database '$DB_NAME' already exists. Choose another name."
+        pause; return
+    fi
+
+    if run_sql "CREATE DATABASE \`$DB_NAME\`;"; then
+        say_ok "Database '$DB_NAME' was created."
+    else
+        say_err "Database was NOT created. Reason:"
+        print_reason "$SQL_ERR"
+    fi
+    pause
+}
+
 remove_database() {
-    echo -n "Enter database name to remove (CTRL+C to quit): "
-    read DB_NAME
+    header "Remove a database"
+    ask "Enter database name to remove (ENTER to return to menu): " || return
+    DB_NAME="$REPLY_VAL"
 
-    # Check if database exists
-    DB_EXISTS=$(mysql -u root -sN -e "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='$DB_NAME';")
-
-    if [ "$DB_EXISTS" -eq 0 ]; then
-        echo "Error: Database '$DB_NAME' does not exist. Returning to main menu."
-        return
+    if ! valid_ident "$DB_NAME"; then
+        say_err "Invalid name."
+        pause; return
+    fi
+    if ! db_exists "$DB_NAME"; then
+        say_err "Database '$DB_NAME' does not exist."
+        pause; return
     fi
 
-    mysql -u root -e "DROP DATABASE \`$DB_NAME\`;"
-    echo "Database '$DB_NAME' removed successfully."
+    printf '%sThis will permanently DROP database "%s". Re-type the name to confirm: %s' \
+        "$C_WARN" "$DB_NAME" "$C_RESET"
+    read -r CONFIRM || return
+    if [ "$CONFIRM" != "$DB_NAME" ]; then
+        say_warn "Confirmation did not match. Aborted."
+        pause; return
+    fi
+
+    if run_sql "DROP DATABASE \`$DB_NAME\`;"; then
+        say_ok "Database '$DB_NAME' removed successfully."
+    else
+        say_err "Failed to remove database:"
+        print_reason "$SQL_ERR"
+    fi
+    pause
 }
 
-# Function to list all users with their hosts
 list_users() {
-    echo "------------------------"
-    echo "        USERS"
-    echo "------------------------"
-    mysql -u root -e "SELECT user, host FROM mysql.user;" | tail -n +2 | awk '{printf " - %s@%s\n", $1, $2}'
-    echo "------------------------"
+    header "Users"
+    mysql -u root -N -B -e "SELECT CONCAT(user, '@', host) FROM mysql.user;" 2>/dev/null \
+        | while IFS= read -r _uh; do
+            printf '  %s-%s %s\n' "$C_KEY" "$C_RESET" "$_uh"
+        done
+    pause
 }
 
-# Function to add a user
 add_user() {
-    while true; do
-        echo -n "Enter new username (CTRL+C to quit): "
-        read USERNAME
-        USERNAME=$(echo "$USERNAME" | tr -d ' ')  # Remove spaces
+    header "Add a user"
+    ask "Enter new username (ENTER to return to menu): " || return
+    USERNAME="$REPLY_VAL"
 
-        if [ -z "$USERNAME" ]; then
-            echo "Error: Username cannot be empty. Try again."
-            continue
-        fi
+    if ! valid_ident "$USERNAME"; then
+        say_err "Invalid username. Use only letters, digits and underscore."
+        pause; return
+    fi
+    if user_exists_localhost "$USERNAME"; then
+        say_err "User '$USERNAME'@'localhost' already exists. Choose another username."
+        pause; return
+    fi
 
-        # Check if user already exists
-        USER_EXISTS=$(mysql -u root -sN -e "SELECT COUNT(*) FROM mysql.user WHERE user='$USERNAME';")
-        if [ "$USER_EXISTS" -gt 0 ]; then
-            echo "Error: User '$USERNAME' already exists. Choose another username."
-            continue
-        fi
+    ask_secret "Enter password for new user (ENTER to return to menu): " || return
+    PASSWORD="$REPLY_VAL"
 
-        break
-    done
+    if run_sql "CREATE USER '$USERNAME'@'localhost' IDENTIFIED BY '$(sql_escape "$PASSWORD")';"; then
+        say_ok "User '$USERNAME'@'localhost' created successfully."
+    else
+        say_err "User was NOT created. Reason:"
+        print_reason "$SQL_ERR"
+        pause; return
+    fi
 
-    echo -n "Enter password for new user: "
-    stty -echo  # Disable input echo
-    read PASSWORD
-    stty echo   # Re-enable input echo
-    echo  # Move to a new line
-
-    mysql -u root -e "CREATE USER '$USERNAME'@'localhost' IDENTIFIED BY '$PASSWORD';"
-    echo "User '$USERNAME' created successfully."
-
-    # Ask if the user should be assigned to a database
-    while true; do
-        echo -n "Should this user be assigned to a database? (y/n): "
-        read ASSIGN_DB
-        case "$ASSIGN_DB" in
-            y|Y)
-                echo -n "Enter the database name to assign: "
-                read DB_NAME
-                # Check if database exists
-                DB_EXISTS=$(mysql -u root -sN -e "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='$DB_NAME';")
-                if [ "$DB_EXISTS" -eq 0 ]; then
-                    echo "Error: Database '$DB_NAME' does not exist. Returning to main menu."
-                else
-                    mysql -u root -e "GRANT ALL PRIVILEGES ON `$DB_NAME`.* TO '$USERNAME'@'localhost';"
-                    mysql -u root -e "FLUSH PRIVILEGES;"
-                    echo "User '$USERNAME' now has access to database '$DB_NAME'."
-                fi
-                break
-                ;;
-            n|N)
-                echo "User '$USERNAME' was created without database access."
-                break
-                ;;
-            *)
-                echo "Invalid input. Please enter 'y' for yes or 'n' for no."
-                ;;
-        esac
-    done
+    # Optional database assignment. ENTER (empty) skips the grant.
+    ask "Assign this user to a database now? Enter DB name (ENTER to skip): " || { pause; return; }
+    DB_NAME="$REPLY_VAL"
+    if ! valid_ident "$DB_NAME"; then
+        say_err "Invalid database name; skipping grant."
+        pause; return
+    fi
+    if ! db_exists "$DB_NAME"; then
+        say_err "Database '$DB_NAME' does not exist; skipping grant."
+        pause; return
+    fi
+    grant_user_db "$USERNAME" "$DB_NAME"
+    pause
 }
 
-# Function to remove a user (handling all host entries)
 remove_user() {
-    echo -n "Enter username to remove (CTRL+C to quit): "
-    read USERNAME
+    header "Remove a user"
+    ask "Enter username to remove (ENTER to return to menu): " || return
+    USERNAME="$REPLY_VAL"
 
-    # Check if user exists
-    USER_EXISTS=$(mysql -u root -sN -e "SELECT COUNT(*) FROM mysql.user WHERE user='$USERNAME';")
-
-    if [ "$USER_EXISTS" -eq 0 ]; then
-        echo "Error: User '$USERNAME' does not exist. Returning to main menu."
-        return
+    if ! valid_ident "$USERNAME"; then
+        say_err "Invalid username."
+        pause; return
+    fi
+    if ! user_exists_any "$USERNAME"; then
+        say_err "User '$USERNAME' does not exist."
+        pause; return
     fi
 
-    echo "Removing user '$USERNAME' from all hosts..."
-    mysql -u root -e "SELECT CONCAT('DROP USER ', QUOTE(user), '@', QUOTE(host), ';') FROM mysql.user WHERE user='$USERNAME';" \
-        | tail -n +2 | mysql -u root 2>/dev/null
+    say_info "Removing user '$USERNAME' from all hosts..."
+    mysql -u root -N -B -e \
+        "SELECT CONCAT('DROP USER ', QUOTE(user), '@', QUOTE(host), ';') FROM mysql.user WHERE user='$USERNAME';" \
+        2>/dev/null | while IFS= read -r _stmt; do
+            [ -n "$_stmt" ] || continue
+            mysql -u root -e "$_stmt" >/dev/null 2>&1
+        done
+    mysql -u root -e "FLUSH PRIVILEGES;" >/dev/null 2>&1
 
-    mysql -u root -e "FLUSH PRIVILEGES;"
-
-    echo "User '$USERNAME' has been removed successfully."
+    if user_exists_any "$USERNAME"; then
+        say_err "User '$USERNAME' could not be fully removed."
+    else
+        say_ok "User '$USERNAME' has been removed successfully."
+    fi
+    pause
 }
 
-# Function to change a user's password
 change_user_password() {
-    echo -n "Enter username whose password you want to change (CTRL+C to quit): "
-    read USERNAME
+    header "Change user password"
+    ask "Enter username whose password you want to change (ENTER to return to menu): " || return
+    USERNAME="$REPLY_VAL"
 
-    # Check if user exists
-    USER_EXISTS=$(mysql -u root -sN -e "SELECT COUNT(*) FROM mysql.user WHERE user='$USERNAME';")
-
-    if [ "$USER_EXISTS" -eq 0 ]; then
-        echo "Error: User '$USERNAME' does not exist. Returning to main menu."
-        return
+    if ! valid_ident "$USERNAME"; then
+        say_err "Invalid username."
+        pause; return
+    fi
+    if ! user_exists_localhost "$USERNAME"; then
+        say_err "User '$USERNAME'@'localhost' does not exist."
+        pause; return
     fi
 
-    echo -n "Enter new password for user '$USERNAME': "
-    stty -echo
-    read PASSWORD
-    stty echo
-    echo  # Move to a new line
+    ask_secret "Enter new password for '$USERNAME' (ENTER to return to menu): " || return
+    PASSWORD="$REPLY_VAL"
 
-    mysql -u root -e "ALTER USER '$USERNAME'@'localhost' IDENTIFIED BY '$PASSWORD';"
-    mysql -u root -e "FLUSH PRIVILEGES;"
-
-    echo "Password for user '$USERNAME' has been updated successfully."
+    if run_sql "ALTER USER '$USERNAME'@'localhost' IDENTIFIED BY '$(sql_escape "$PASSWORD")'; FLUSH PRIVILEGES;"; then
+        say_ok "Password for '$USERNAME'@'localhost' updated successfully."
+    else
+        say_err "Failed to update password:"
+        print_reason "$SQL_ERR"
+    fi
+    pause
 }
 
-# Function to assign an existing user to an existing database
 assign_user_to_db() {
-    echo -n "Enter username to assign (CTRL+C to quit): "
-    read USERNAME
+    header "Assign a user to a database"
+    ask "Enter username to assign (ENTER to return to menu): " || return
+    USERNAME="$REPLY_VAL"
 
-    # Check if user exists; if not, return to main menu
-    USER_EXISTS=$(mysql -u root -sN -e "SELECT COUNT(*) FROM mysql.user WHERE user='$USERNAME';")
-    if [ "$USER_EXISTS" -eq 0 ]; then
-        echo "Error: User '$USERNAME' does not exist. Returning to main menu."
-        return
+    if ! valid_ident "$USERNAME"; then
+        say_err "Invalid username."
+        pause; return
+    fi
+    if ! user_exists_localhost "$USERNAME"; then
+        say_err "User '$USERNAME'@'localhost' does not exist."
+        pause; return
     fi
 
-    echo -n "Enter the database name to assign: "
-    read DB_NAME
+    ask "Enter the database name to assign (ENTER to return to menu): " || return
+    DB_NAME="$REPLY_VAL"
 
-    # Check if database exists; if not, return to main menu
-    DB_EXISTS=$(mysql -u root -sN -e "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='$DB_NAME';")
-    if [ "$DB_EXISTS" -eq 0 ]; then
-        echo "Error: Database '$DB_NAME' does not exist. Returning to main menu."
-        return
+    if ! valid_ident "$DB_NAME"; then
+        say_err "Invalid database name."
+        pause; return
+    fi
+    if ! db_exists "$DB_NAME"; then
+        say_err "Database '$DB_NAME' does not exist."
+        pause; return
     fi
 
-    mysql -u root -e "GRANT ALL PRIVILEGES ON `$DB_NAME`.* TO '$USERNAME'@'localhost';"
-    mysql -u root -e "FLUSH PRIVILEGES;"
-    echo "User '$USERNAME' now has access to database '$DB_NAME'."
+    grant_user_db "$USERNAME" "$DB_NAME"
+    pause
 }
 
-# Main menu
-while true; do
-    echo ""
-    echo "=================================================="
-    echo "  MariAdmin - MariaDB/MySQL Management Menu"
-    echo "        v0.1 - Ozgur Konstantin Kazancci"
-    echo "=================================================="
-    echo "1) List databases"
-    echo "2) Add a database"
-    echo "3) Remove a database"
-    echo "4) List users"
-    echo "5) Add a user"
-    echo "6) Remove a user"
-    echo "7) Assign a user to a DB"
-    echo "8) Change user password"
-    echo "9) Exit"
-    echo -n "Choose an option: "
-    read OPTION
+# ---------------------------------------------------------------------------
+# Authentication: use passwordless access when available (unix_socket auth or
+# a client defaults file); otherwise prompt for the root password and verify.
+# ---------------------------------------------------------------------------
+authenticate() {
+    if mysql -u root -e 'SELECT 1;' >/dev/null 2>&1; then
+        return 0
+    fi
+    clear_screen
+    printf '%sMariAdmin%s\n\n' "$C_TITLE" "$C_RESET"
+    ask_secret "Enter MySQL root password: " || {
+        say_err "No password entered. Exiting."
+        exit 1
+    }
+    # Hand the password to the client via the environment (kept off the
+    # command line and out of the process list).
+    export MYSQL_PWD="$REPLY_VAL"
+    if ! mysql -u root -e 'SELECT 1;' >/dev/null 2>&1; then
+        say_err "Cannot authenticate to MariaDB with that password."
+        exit 1
+    fi
+}
 
-    case $OPTION in
+# ---------------------------------------------------------------------------
+# Entry point.
+# ---------------------------------------------------------------------------
+if ! command -v mysql >/dev/null 2>&1; then
+    printf 'Error: the mysql client was not found in PATH.\n' >&2
+    exit 1
+fi
+
+authenticate
+
+while true; do
+    clear_screen
+    printf '%s==================================================%s\n' "$C_TITLE" "$C_RESET"
+    printf '%s  MariAdmin - MariaDB/MySQL Management Menu%s\n' "$C_TITLE" "$C_RESET"
+    printf '%s        v0.2 - Ozgur Konstantin Kazancci%s\n' "$C_DIM" "$C_RESET"
+    printf '%s==================================================%s\n' "$C_TITLE" "$C_RESET"
+    printf '  %s1%s) List databases\n'      "$C_KEY" "$C_RESET"
+    printf '  %s2%s) Add a database\n'      "$C_KEY" "$C_RESET"
+    printf '  %s3%s) Remove a database\n'   "$C_KEY" "$C_RESET"
+    printf '  %s4%s) List users\n'          "$C_KEY" "$C_RESET"
+    printf '  %s5%s) Add a user\n'          "$C_KEY" "$C_RESET"
+    printf '  %s6%s) Remove a user\n'       "$C_KEY" "$C_RESET"
+    printf '  %s7%s) Assign a user to a DB\n' "$C_KEY" "$C_RESET"
+    printf '  %s8%s) Change user password\n' "$C_KEY" "$C_RESET"
+    printf '  %s9%s) Exit\n'                "$C_KEY" "$C_RESET"
+    printf '%s--------------------------------------------------%s\n' "$C_MENU" "$C_RESET"
+    printf '%sChoose an option: %s' "$C_PROMPT" "$C_RESET"
+
+    if ! read -r OPTION; then
+        printf '\n'
+        exit 0
+    fi
+
+    case "$OPTION" in
         1) list_databases ;;
         2) add_database ;;
         3) remove_database ;;
@@ -253,7 +402,8 @@ while true; do
         6) remove_user ;;
         7) assign_user_to_db ;;
         8) change_user_password ;;
-        9) exit 0 ;;
-        *) echo "Invalid option. Try again." ;;
+        9) clear_screen; exit 0 ;;
+        "") : ;;
+        *) say_err "Invalid option. Try again."; pause ;;
     esac
 done
