@@ -374,7 +374,7 @@ while true; do
     clear_screen
     printf '%s==================================================%s\n' "$C_TITLE" "$C_RESET"
     printf '%s  MariAdmin - MariaDB/MySQL Management Menu%s\n' "$C_TITLE" "$C_RESET"
-    printf '%s        v0.2 - Ozgur Konstantin Kazancci%s\n' "$C_DIM" "$C_RESET"
+    printf '%s        v0.2 - Ozgur Konstantin Kazancci%s\n' "$C_TITLE" "$C_RESET"
     printf '%s==================================================%s\n' "$C_TITLE" "$C_RESET"
     printf '  %s1%s) List databases\n'      "$C_KEY" "$C_RESET"
     printf '  %s2%s) Add a database\n'      "$C_KEY" "$C_RESET"
