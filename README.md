@@ -89,9 +89,23 @@ Issues and pull requests are welcome. Keep it POSIX `sh`-clean (test with `sh -n
 
 ---
 
-## 📄 License
+## 📄 License & ChangeLog
 
-Do with it what you will; just don't blame me for dropped tables. :/
+**License**: Do with it what you will; just don't blame me for dropped tables. :/
+
+**ChangeLog**:
+
+**15/07/2026**:
+
+- Rewrote mariadmin.sh (v0.2), fixing the critical bug where unescaped backticks in the GRANT statements caused shell command substitution — so assigning a user to a database now actually grants privileges instead of silently failing (and the command-execution hole is closed).
+
+- Hardened all input handling: identifiers are validated against ^[A-Za-z0-9_]+$ (blocking SQL injection), passwords are safely escaped, and every mysql call's exit status is checked before printing success.
+
+- Added dual-mode authentication: the script probes for passwordless root access (unix_socket / defaults file) and only prompts for a password when needed, always operating on localhost.
+
+- New UX: colored menus (auto-disabled when not a TTY), "ENTER to return to menu" on every prompt (no CTRL+C), and the screen clears each step so the menu stays on top with interaction below.
+
+- Verified end-to-end on OpenBSD 7.9 and FreeBSD 15.1 — GRANT fix, quoted-password login, and injection rejection all confirmed, with before/after snapshots identical (zero damage to existing databases).
 
 ---
 
