@@ -52,20 +52,6 @@ Choose an option:
 Pick a number and follow the prompts.
 At any input prompt you can press **Enter** to return to menu, **Ctrl+C** to quit back to your shell.
 
-### Example: a clear failure
-
-Because MariAdmin actually checks whether the command worked, a bad database name gets an honest answer instead of a false "success":
-
-```text
-+----------------------------------------+
-|  ERROR: DATABASE WAS NOT CREATED        |
-+----------------------------------------+
-  Name   : some bad name
-  Reason :
-    ERROR 1064 (42000) at line 1: You have an error in your SQL syntax...
-+----------------------------------------+
-```
-
 ---
 
 ## 🔐 Security notes
