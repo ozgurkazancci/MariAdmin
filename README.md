@@ -64,7 +64,6 @@ At any input prompt you can press **Enter** to return to menu, **Ctrl+C** to qui
 
 ## 📝 Notes & limitations
 
-- Identifiers are backtick-quoted, so database names containing dots (e.g. `en.mysite_org`) are accepted. MariaDB encodes such characters on disk, so the on-disk data directory name may not read literally.
 - User existence is matched by **username** (any host). This is intentional given the localhost-only design above.
 - The script targets the standard `mysql`/`mariadb` client behaviour; exotic auth plugins may need tweaks.
 
