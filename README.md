@@ -7,7 +7,7 @@ MariAdmin is a single, dependency-free shell script that gives you a friendly te
 ## ✨ Features
 
 - **List databases** — a tidy, de-cluttered view of everything on the server.
-- **Add a database** — with empty-name and duplicate checks, identifier quoting (so names like `en.mysite_org` work), and an honest success/failure report instead of a misleading "success".
+- **Add a database** — with empty-name and duplicate checks, identifier quoting, and an honest success/failure report instead of a misleading "success".
 - **Remove a database** — existence-checked before it touches anything.
 - **List users** — shown as `user@host`.
 - **Add a user** — created at `localhost`, with an optional prompt to grant it access to a database on the spot.
