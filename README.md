@@ -56,7 +56,7 @@ At any input prompt you can press **Enter** to return to menu, **Ctrl+C** to qui
 
 ## 🔐 Security notes
 
-- The root password is read **once**, with terminal echo disabled, and passed to the client through the `MYSQL_PWD` environment variable. It is **never** placed on the command line, so it won't show up in `ps` output and won't trigger MariaDB's *"Using a password on the command line interface can be insecure"* warning.
+- The root password is read **once**, with terminal echo disabled, and passed to the client. It is **never** placed on the command line, so it won't show up in `ps` output and won't trigger MariaDB's *"Using a password on the command line interface can be insecure"* warning.
 - New users and grants are scoped to **`localhost`** by design. If you need users reachable from other hosts, adjust the `CREATE USER` / `GRANT` host part to suit.
 - This is an administrative convenience tool. Run it as a trusted operator on a trusted machine — it can drop databases and delete users.
 
