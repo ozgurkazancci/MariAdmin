@@ -32,20 +32,20 @@ MariAdmin is a single, dependency-free shell script that gives you a friendly te
 Run the script and enter your MariaDB root password when asked (your typing stays hidden):
 
 ```text
-Enter MySQL root password:
-================================================
+==================================================
   MariAdmin - MariaDB/MySQL Management Menu
-        v0.1 - Ozgur Konstantin Kazancci
-================================================
-1) List databases
-2) Add a database
-3) Remove a database
-4) List users
-5) Add a user
-6) Remove a user
-7) Assign a user to a DB
-8) Change user password
-9) Exit
+        v0.2 - Ozgur Konstantin Kazancci
+==================================================
+  1) List databases
+  2) Add a database
+  3) Remove a database
+  4) List users
+  5) Add a user
+  6) Remove a user
+  7) Assign a user to a DB
+  8) Change user password
+  9) Exit
+--------------------------------------------------
 Choose an option:
 ```
 
