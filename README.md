@@ -1,40 +1,64 @@
 # 🛠️ MariAdmin
 
-MariAdmin is a single, dependency-free shell script that gives you a friendly text menu for the database chores you'd otherwise type out by hand: creating and dropping databases, adding and removing users, handing out privileges, and rotating passwords. It speaks the `mysql`/`mariadb` client and runs happily on **OpenBSD** and **FreeBSD** — tested on both — and never asks for more than your root password (once, with the echo turned off).
+MariAdmin is a single POSIX shell script that gives you a friendly text menu for the database chores you'd otherwise type out by hand: creating and dropping databases, adding and removing users, handing out privileges, and rotating passwords. Version **0.3** uses the installed `mariadb` client, falling back to `mysql`, and is designed for **OpenBSD**, **FreeBSD** and Linux.
 
 ---
 
 ## ✨ Features
 
-- **List databases** — a tidy, de-cluttered view of everything on the server.
-- **Add a database** — with empty-name and duplicate checks, identifier quoting, and an honest success/failure report instead of a misleading "success".
-- **Remove a database** — existence-checked before it touches anything.
-- **List users** — shown as `user@host`.
+- **List databases** — a tidy view of the server's databases, with query failures reported.
+- **Add a database** — with empty-name and duplicate checks, identifier quoting, and an honest success/failure report.
+- **Remove a database** — existence-checked, with the name retyped to confirm removal.
+- **List users** — shown as `user@host`, with query failures reported.
 - **Add a user** — created at `localhost`, with an optional prompt to grant it access to a database on the spot.
-- **Remove a user** — cleans up *all* host entries for that username, not just one.
-- **Assign a user to a database** — verifies both the user and the database exist before granting; returns to the main menu otherwise.
-- **Change a user's password** — quick, hidden-input password rotation.
-- **Safe by default** — hidden password entry, `(CTRL+C to quit)` hints on every input prompt, and clear boxed error messages.
+- **Remove a user** — removes all host entries after confirmation and blocks removal of the connected administrative username.
+- **Assign a user to a database** — verifies the user and database exist and grants access to the named database, including literal underscores.
+- **Change a user's password** — hidden-input password rotation for `localhost` accounts, with refreshed credentials when changing the active account's password.
+- **Safe by default** — hidden password entry, preserved whitespace, terminal restoration on exit and handled signals, and explicit error messages.
+- **Choose the connection** — select the administrative account and local server instance, then see the target and authenticated identity in the menu.
 
 ---
 
 ## 📋 Requirements
 
-- A POSIX-compatible `/bin/sh` (the OpenBSD and FreeBSD default `sh` is fine).
-- The `mysql` / `mariadb` command-line client installed and on your `PATH`.
-- A running **MariaDB** (or MySQL) server.
-- The **root** database password (or another account with sufficient privileges).
+- A POSIX-compatible `/bin/sh`.
+- The `mariadb` or `mysql` command-line client on your `PATH`.
+- Standard shell utilities, including `mktemp`, `sed`, and `stty`.
+- A running local MariaDB or MySQL server and an administrative account with the privileges needed for the selected operations.
 
 ---
 
 ## 📖 Usage
 
-Run the script and enter your MariaDB root password when asked (your typing stays hidden):
+From the downloaded repository, run:
+
+```sh
+sh mariadmin.sh
+```
+
+The default connection uses database account `root` over the local Unix socket. MariAdmin first tries the available authentication settings and prompts for a password if needed. Password typing is hidden on a terminal.
+
+To select another administrative account or socket:
+
+```sh
+sh mariadmin.sh --user dbadmin
+sh mariadmin.sh --user dbadmin --socket /var/run/mysql/mysql.sock
+```
+
+To select a local instance over TCP:
+
+```sh
+sh mariadmin.sh --host 127.0.0.1 --port 3306 --user dbadmin
+```
+
+Use `--user NAME` to choose the administrative account (default: `root`), `--socket PATH` to select a Unix socket, or `--host HOST` and `--port PORT` to use local TCP. Supported hosts are `localhost`, `127.0.0.1`, and `::1`; other hosts are rejected. Do not combine `--socket` with `--host` or `--port`. Run `sh mariadmin.sh --help` for usage or `sh mariadmin.sh --version` for the version.
+
+The menu identifies the connection target and authenticated account, followed by these actions:
 
 ```text
 ==================================================
   MariAdmin - MariaDB/MySQL Management Menu
-        v0.2 - Ozgur Konstantin Kazancci
+        v0.3 - Ozgur Konstantin Kazancci
 ==================================================
   1) List databases
   2) Add a database
@@ -49,29 +73,41 @@ Run the script and enter your MariaDB root password when asked (your typing stay
 Choose an option:
 ```
 
-Pick a number and follow the prompts.
-At any input prompt you can press **Enter** to return to menu, **Ctrl+C** to quit back to your shell.
+Pick a number and follow the prompts. At an action's input prompt, press **Enter** to cancel that action or **Ctrl+C** to exit. Database and user removal require retyping the name. A blank initial authentication password exits the script; blank new passwords are not accepted.
 
 ---
 
 ## 🔐 Security notes
 
-- The root password is read **once**, with terminal echo disabled, and passed to the client. It is **never** placed on the command line, so it won't show up in `ps` output and won't trigger MariaDB's *"Using a password on the command line interface can be insecure"* warning.
-- New users and grants are scoped to **`localhost`** by design. If you need users reachable from other hosts, adjust the `CREATE USER` / `GRANT` host part to suit.
-- This is an administrative convenience tool. Run it as a trusted operator on a trusted machine — it can drop databases and delete users.
+- SQL is sent through the client's standard input. Neither administrative passwords nor passwords in account-management SQL are placed in client command-line arguments.
+- Supplied administrative passwords are stored in a temporary client option file, with mode `600` inside a private directory with mode `700`. MariAdmin removes these files on normal exit and handled signals. It does not export `MYSQL_PWD` to client processes.
+- Once a password is supplied, MariAdmin uses its private option file instead of client defaults or login-path settings, so a stale saved password cannot override the supplied password. For a nonstandard local socket, select it explicitly with `--socket`.
+- Password-related query failures display an error code instead of echoing SQL or server messages that could contain the password.
+- Password input preserves spaces, quotes, and backslashes. Each SQL connection removes `NO_BACKSLASH_ESCAPES` from its own session's SQL mode so string escaping is consistent; global server settings are unchanged.
+- Connections are restricted to local sockets and the supported local host values. Verify the displayed local instance before performing administrative operations.
 
 ---
 
 ## 📝 Notes & limitations
 
-- User existence is matched by **username** (any host). This is intentional given the localhost-only design above.
-- The script targets the standard `mysql`/`mariadb` client behaviour; exotic auth plugins may need tweaks.
+- Database names and usernames entered in menu actions accept letters, digits, and underscores. Existing accounts with other username characters need to be managed using another client.
+- Creating users, granting privileges, and changing passwords target **`'username'@'localhost'`**.
+- Removing a user targets **all host entries for that username**. To remove the connected administrative username, connect using another administrator first.
+- New grants escape database-name wildcards as required by the server's privilege mode. Existing grants are not rewritten by upgrading the script.
+- Passwords are read as a single line. Empty passwords are not supported by the interactive prompts.
+- Server authentication plugins and the administrator's privileges still determine which operations are available.
+- Terminal restoration and temporary-file cleanup cannot run after an uncatchable process termination such as `SIGKILL`.
 
 ---
 
 ## 🤝 Contributing
 
-Issues and pull requests are welcome. Keep it POSIX `sh`-clean (test with `sh -n mariadmin.sh`) so it stays portable across OpenBSD and FreeBSD.
+Issues and pull requests are welcome. Keep changes compatible with POSIX `sh`, and run:
+
+```sh
+sh -n mariadmin.sh
+sh tests/test-mariadmin.sh
+```
 
 ---
 
@@ -80,6 +116,24 @@ Issues and pull requests are welcome. Keep it POSIX `sh`-clean (test with `sh -n
 **License**: Do with it what you will; just don't blame me for dropped tables. :/
 
 **ChangeLog**:
+
+**09/09/2026**:
+
+- Updated mariadmin.sh to v0.3, fixing literal-underscore database grants, SQL-mode-dependent password escaping, and password exposure in client arguments and query errors.
+
+- Added explicit local connection and administrative-account options, visible connection identity, and `mariadb`/`mysql` client detection.
+
+- Updated authentication so supplied passwords take precedence over stale client passwords and active-account password changes refresh and verify the connection.
+
+- Corrected query-status checks and all-host user removal, including escaped host names, failure reporting, confirmation, and prevention of connected-account removal.
+
+- Preserved leading and trailing whitespace in input and restored terminal settings on exit and handled signals.
+
+- Added regression checks and updated usage documentation.
+
+- Verified v0.3 on Ubuntu 26.04 LTS with MariaDB 11.8.6 and added Linux to the supported platforms.
+
+- Verified v0.3 on OpenBSD 7.9 with MariaDB 11.4.12 and made the regression tests compatible with the native shell and interactive console.
 
 **15/07/2026**:
 
