@@ -1,6 +1,6 @@
 # 🛠️ MariAdmin
 
-MariAdmin is a single POSIX shell script that gives you a friendly text menu for the database chores you'd otherwise type out by hand: creating and dropping databases, adding and removing users, handing out privileges, and rotating passwords. Version **0.3** uses the installed `mariadb` client, falling back to `mysql`, and is designed for **OpenBSD**, **FreeBSD** and Linux.
+MariAdmin is a single POSIX shell script that gives you a friendly text menu for the database chores you'd otherwise type out by hand: creating and dropping databases, adding and removing users, handing out privileges, and rotating passwords. Version **0.3** uses the installed `mariadb` client, falling back to `mysql`, and is designed for **OpenBSD**, **FreeBSD** and **Linux**.
 
 ---
 
