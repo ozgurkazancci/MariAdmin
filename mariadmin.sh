@@ -1,8 +1,8 @@
 #!/bin/sh
 # MariAdmin - MariaDB/MySQL management menu
-# v0.3 - Ozgur Konstantin Kazancci
+# v0.4 - Ozgur Konstantin Kazancci
 
-VERSION=0.3
+VERSION=0.4
 TTY_STATE=
 DB_TEMP_DIR=
 if [ -t 1 ]; then
@@ -10,8 +10,10 @@ if [ -t 1 ]; then
     C_RESET="${ESC}[0m"; C_TITLE="${ESC}[1;36m"; C_MENU="${ESC}[0;36m"
     C_KEY="${ESC}[1;33m"; C_OK="${ESC}[1;32m"; C_ERR="${ESC}[1;31m"
     C_WARN="${ESC}[1;33m"; C_PROMPT="${ESC}[1;37m"; C_DIM="${ESC}[0;90m"
+    C_INFO="${ESC}[1;32m"
 else
     C_RESET=; C_TITLE=; C_MENU=; C_KEY=; C_OK=; C_ERR=; C_WARN=; C_PROMPT=; C_DIM=
+    C_INFO=
 fi
 say_ok()   { printf '%s%s%s\n' "$C_OK" "$1" "$C_RESET"; }
 say_err()  { printf '%s%s%s\n' "$C_ERR" "$1" "$C_RESET"; }
@@ -28,13 +30,17 @@ pause() {
 }
 connection_info() {
     if [ "$DB_PROTOCOL" = socket ]; then
-        say_info "Connection: localhost via socket ${DB_SOCKET:-default}"
+        printf '%s%s%s\n' "$C_INFO" "Connection: localhost via socket ${DB_SOCKET:-default}" "$C_RESET"
     else
-        say_info "Connection: $DB_HOST:$DB_PORT (TCP)"
+        printf '%s%s%s\n' "$C_INFO" "Connection: $DB_HOST:$DB_PORT (TCP)" "$C_RESET"
     fi
     if [ -n "${DB_CURRENT_USER-}" ]; then
-        say_info "Server: $DB_SERVER_HOST:$DB_SERVER_PORT | Account: $DB_CURRENT_USER"
+        printf '%s%s%s\n' "$C_INFO" "Server: $DB_SERVER_HOST:$DB_SERVER_PORT | Account: $DB_CURRENT_USER" "$C_RESET"
     fi
+    if [ -n "${DB_SOFTWARE-}" ]; then
+        printf '%s%s%s\n' "$C_INFO" "Software: $DB_SOFTWARE" "$C_RESET"
+    fi
+    printf '%s==================================================%s\n' "$C_TITLE" "$C_RESET"
 }
 header() {
     clear_screen
@@ -84,6 +90,20 @@ ask_secret() {
 }
 valid_ident() {
     case "$1" in ''|*[!A-Za-z0-9_]*) return 1 ;; *) return 0 ;; esac
+}
+# Usernames are entered without the host part; MariAdmin always works on
+# 'localhost' (Remove a user drops every host entry of that username).
+valid_username() {
+    case "$1" in
+        *@*)
+            say_err "Enter only the username, without '@host' (e.g. 'webuser', not 'webuser@localhost')."
+            return 1 ;;
+    esac
+    if ! valid_ident "$1"; then
+        say_err 'Invalid username. Use only letters, digits and underscore.'
+        return 1
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -268,10 +288,26 @@ user_exists_any() {
     check_count_result
 }
 
+# Turn VERSION() and @@version_comment into e.g. "MariaDB 10.6.27" or "MySQL 8.0.36".
+software_label() {
+    _sw_version=${1%%-*}
+    case "$1" in
+        *MariaDB*|*mariadb*) _sw_name=MariaDB ;;
+        *)
+            case "$2" in
+                *Percona*) _sw_name='Percona Server' ;;
+                *) _sw_name=MySQL ;;
+            esac ;;
+    esac
+    printf '%s %s' "$_sw_name" "$_sw_version"
+}
+
 verify_connection() {
-    query_sql 'SELECT CURRENT_USER(), HEX(CURRENT_USER()), @@hostname, @@port, @@socket;' || return 1
+    # Never-empty columns come first: tab is IFS whitespace, so an empty field
+    # would be collapsed by read and shift every following value.
+    query_sql "SELECT CURRENT_USER(), HEX(CURRENT_USER()), VERSION(), COALESCE(NULLIF(@@version_comment, ''), '-'), @@hostname, @@port, @@socket;" || return 1
     _previous_account=$DB_CURRENT_ACCOUNT_HEX
-    IFS="$(printf '\t')" read -r _account _account_hex _server_host _server_port _server_socket <<EOF
+    IFS="$(printf '\t')" read -r _account _account_hex _server_version _server_comment _server_host _server_port _server_socket <<EOF
 $SQL_OUT
 EOF
     case "$_account_hex" in
@@ -286,6 +322,7 @@ EOF
     DB_SERVER_HOST=$_server_host
     DB_SERVER_PORT=$_server_port
     DB_SERVER_SOCKET=$_server_socket
+    DB_SOFTWARE=$(software_label "$_server_version" "$_server_comment")
     # Keep a custom default socket available when a password file replaces the
     # normal client defaults. An explicitly selected socket always takes priority.
     if [ "$DB_PROTOCOL" = socket ] && [ -z "$DB_SOCKET" ]; then
@@ -376,13 +413,17 @@ list_databases() {
     fi
     pause
 }
+print_user_list() {
+    if query_sql "SELECT CONCAT(user, '@', host) FROM mysql.user ORDER BY user, host;"; then
+        if [ -n "$SQL_OUT" ]; then printf '%s\n' "$SQL_OUT" | sed 's/^/  - /'; else say_info '  (no users found)'; fi
+        return 0
+    fi
+    say_err 'Cannot list users.'; print_reason "$SQL_ERR"
+    return 1
+}
 list_users() {
     header 'Users'
-    if query_sql "SELECT CONCAT(user, '@', host) FROM mysql.user ORDER BY user, host;"; then
-        if [ -n "$SQL_OUT" ]; then printf '%s\n' "$SQL_OUT" | sed 's/^/  - /'; fi
-    else
-        say_err 'Cannot list users.'; print_reason "$SQL_ERR"
-    fi
+    print_user_list
     pause
 }
 add_database() {
@@ -427,7 +468,7 @@ add_user() {
     header 'Add a user'
     ask 'Enter new username (ENTER to return to menu): ' || return
     USERNAME=$REPLY_VAL
-    if ! valid_ident "$USERNAME"; then say_err 'Invalid username. Use only letters, digits and underscore.'; pause; return; fi
+    valid_username "$USERNAME" || { pause; return; }
     if user_exists_localhost "$USERNAME"; then
         say_err "User '$USERNAME'@'localhost' already exists."; pause; return
     else
@@ -453,9 +494,13 @@ add_user() {
 }
 remove_user() {
     header 'Remove a user'
+    printf '%sExisting users:%s\n' "$C_TITLE" "$C_RESET"
+    print_user_list
+    printf '\n%sEnter only the username, without the @host part.%s\n' "$C_KEY" "$C_RESET"
+    printf '%sExample: to remove webuser@localhost, type: webuser%s\n\n' "$C_KEY" "$C_RESET"
     ask 'Enter username to remove (ENTER to return to menu): ' || return
     USERNAME=$REPLY_VAL
-    if ! valid_ident "$USERNAME"; then say_err 'Invalid username.'; pause; return; fi
+    valid_username "$USERNAME" || { pause; return; }
     if ! verify_connection; then
         say_err 'Cannot verify the active administrator.'; print_reason "$SQL_ERR"; pause; return
     fi
@@ -498,7 +543,7 @@ change_user_password() {
     header 'Change user password'
     ask 'Enter username whose password you want to change (ENTER to return to menu): ' || return
     USERNAME=$REPLY_VAL
-    if ! valid_ident "$USERNAME"; then say_err 'Invalid username.'; pause; return; fi
+    valid_username "$USERNAME" || { pause; return; }
     require_local_user "$USERNAME" || { pause; return; }
     if ! verify_connection || ! query_sql 'SELECT VERSION();'; then
         say_err 'Cannot verify the server and administrator.'; print_reason "$SQL_ERR"; pause; return
@@ -533,7 +578,7 @@ assign_user_to_db() {
     header 'Assign a user to a database'
     ask 'Enter username to assign (ENTER to return to menu): ' || return
     USERNAME=$REPLY_VAL
-    if ! valid_ident "$USERNAME"; then say_err 'Invalid username.'; pause; return; fi
+    valid_username "$USERNAME" || { pause; return; }
     require_local_user "$USERNAME" || { pause; return; }
     ask 'Enter the database name to assign (ENTER to return to menu): ' || return
     DB_NAME=$REPLY_VAL
@@ -543,7 +588,7 @@ assign_user_to_db() {
     pause
 }
 usage() {
-    printf '%s\n' 'MariAdmin v0.3 - local MariaDB/MySQL administration' \
+    printf '%s\n' "MariAdmin v$VERSION - local MariaDB/MySQL administration" \
         'Usage: sh mariadmin.sh [--user NAME] [--socket PATH | --host HOST [--port PORT]]' \
         '  --user NAME    Administrator account (default: root)' \
         '  --socket PATH  Local Unix socket (default: client socket)' \
@@ -587,7 +632,7 @@ parse_options() {
 }
 main() {
     DB_ADMIN=root; DB_HOST=localhost; DB_PORT=3306; DB_SOCKET=; DB_PROTOCOL=socket
-    DB_TEMP_DIR=; DB_CURRENT_USER=
+    DB_TEMP_DIR=; DB_CURRENT_USER=; DB_SOFTWARE=
     unset PASSWORD REPLY_VAL SQL_OUT SQL_ERR _password_sql
     if parse_options "$@"; then :; else _parse_rc=$?; [ "$_parse_rc" -eq 2 ] && return 0; return 1; fi
     select_client || return 1
