@@ -107,11 +107,10 @@ Pick a number and follow the prompts. At an action's input prompt, press **Enter
 
 ## 🤝 Contributing
 
-Issues and pull requests are welcome. Keep changes compatible with POSIX `sh`, and run:
+Issues and pull requests are welcome. Keep changes compatible with POSIX `sh`, and check the syntax with:
 
 ```sh
 sh -n mariadmin.sh
-sh tests/test-mariadmin.sh
 ```
 
 ---
@@ -132,8 +131,6 @@ sh tests/test-mariadmin.sh
 
 - Improved the connection banner: the Connection and Server lines are now bold green instead of dim gray, a new Software line shows the database software (MariaDB, MySQL or Percona Server) and its version, and a separator line closes the banner.
 
-- Added regression checks for the user list, the username-only hint, `user@host` rejection and software detection (70 checks in total).
-
 - Verified v0.4 on FreeBSD 15.1 with MariaDB 10.6.27.
 
 **09/09/2026**:
@@ -148,11 +145,11 @@ sh tests/test-mariadmin.sh
 
 - Preserved leading and trailing whitespace in input and restored terminal settings on exit and handled signals.
 
-- Added regression checks and updated usage documentation.
+- Updated usage documentation.
 
 - Verified v0.3 on Ubuntu 26.04 LTS with MariaDB 11.8.6 and added Linux to the supported platforms.
 
-- Verified v0.3 on OpenBSD 7.9 with MariaDB 11.4.12 and made the regression tests compatible with the native shell and interactive console.
+- Verified v0.3 on OpenBSD 7.9 with MariaDB 11.4.12.
 
 **15/07/2026**:
 
