@@ -1,6 +1,6 @@
 # 🛠️ MariAdmin
 
-MariAdmin is a single POSIX shell script that gives you a friendly text menu for the database chores you'd otherwise type out by hand: creating and dropping databases, adding and removing users, handing out privileges, and rotating passwords. Version **0.3** uses the installed `mariadb` client, falling back to `mysql`, and is designed for **OpenBSD**, **FreeBSD** and **Linux**.
+MariAdmin is a single POSIX shell script that gives you a friendly text menu for the database chores you'd otherwise type out by hand: creating and dropping databases, adding and removing users, handing out privileges, and rotating passwords. Version **0.4** uses the installed `mariadb` client, falling back to `mysql`, and is designed for **OpenBSD**, **FreeBSD** and **Linux**.
 
 ---
 
@@ -11,11 +11,11 @@ MariAdmin is a single POSIX shell script that gives you a friendly text menu for
 - **Remove a database** — existence-checked, with the name retyped to confirm removal.
 - **List users** — shown as `user@host`, with query failures reported.
 - **Add a user** — created at `localhost`, with an optional prompt to grant it access to a database on the spot.
-- **Remove a user** — removes all host entries after confirmation and blocks removal of the connected administrative username.
+- **Remove a user** — lists the existing accounts first, explains that only the username is entered (e.g. `webuser` for `webuser@localhost`), removes all host entries after confirmation and blocks removal of the connected administrative username.
 - **Assign a user to a database** — verifies the user and database exist and grants access to the named database, including literal underscores.
 - **Change a user's password** — hidden-input password rotation for `localhost` accounts, with refreshed credentials when changing the active account's password.
 - **Safe by default** — hidden password entry, preserved whitespace, terminal restoration on exit and handled signals, and explicit error messages.
-- **Choose the connection** — select the administrative account and local server instance, then see the target and authenticated identity in the menu.
+- **Choose the connection** — select the administrative account and local server instance, then see the target, authenticated identity and database software (MariaDB, MySQL or Percona Server, with version) on every screen.
 
 ---
 
@@ -53,12 +53,16 @@ sh mariadmin.sh --host 127.0.0.1 --port 3306 --user dbadmin
 
 Use `--user NAME` to choose the administrative account (default: `root`), `--socket PATH` to select a Unix socket, or `--host HOST` and `--port PORT` to use local TCP. Supported hosts are `localhost`, `127.0.0.1`, and `::1`; other hosts are rejected. Do not combine `--socket` with `--host` or `--port`. Run `sh mariadmin.sh --help` for usage or `sh mariadmin.sh --version` for the version.
 
-The menu identifies the connection target and authenticated account, followed by these actions:
+The menu identifies the connection target, authenticated account and database software, followed by these actions:
 
 ```text
 ==================================================
   MariAdmin - MariaDB/MySQL Management Menu
-        v0.3 - Ozgur Konstantin Kazancci
+        v0.4 - Ozgur Konstantin Kazancci
+==================================================
+Connection: localhost via socket /var/run/mysql/mysql.sock
+Server: dbhost:3306 | Account: root@localhost
+Software: MariaDB 11.4.12
 ==================================================
   1) List databases
   2) Add a database
@@ -91,6 +95,7 @@ Pick a number and follow the prompts. At an action's input prompt, press **Enter
 ## 📝 Notes & limitations
 
 - Database names and usernames entered in menu actions accept letters, digits, and underscores. Existing accounts with other username characters need to be managed using another client.
+- Usernames are entered without the host part: type `webuser`, not `webuser@localhost`. Input containing `@` is rejected with an example and no SQL is sent.
 - Creating users, granting privileges, and changing passwords target **`'username'@'localhost'`**.
 - Removing a user targets **all host entries for that username**. To remove the connected administrative username, connect using another administrator first.
 - New grants escape database-name wildcards as required by the server's privilege mode. Existing grants are not rewritten by upgrading the script.
@@ -116,6 +121,20 @@ sh tests/test-mariadmin.sh
 **License**: Do with it what you will; just don't blame me for dropped tables. :/
 
 **ChangeLog**:
+
+**11/11/2026**:
+
+- Updated mariadmin.sh to v0.4; the `--help` text now reads the version from the script instead of a hard-coded string.
+
+- Remove a user now lists the existing accounts before the prompt and explains, with an example, that only the username is entered (type `webuser` to remove `webuser@localhost`).
+
+- All username prompts (add, remove, assign and change password) now reject `user@host` input with an explanatory example instead of a generic "Invalid username" message, and send no SQL.
+
+- Improved the connection banner: the Connection and Server lines are now bold green instead of dim gray, a new Software line shows the database software (MariaDB, MySQL or Percona Server) and its version, and a separator line closes the banner.
+
+- Added regression checks for the user list, the username-only hint, `user@host` rejection and software detection (70 checks in total).
+
+- Verified v0.4 on FreeBSD 15.1 with MariaDB 10.6.27.
 
 **09/09/2026**:
 
